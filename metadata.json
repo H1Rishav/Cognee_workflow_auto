@@ -1,0 +1,6 @@
+{
+  "name": "MNEMOSYNE",
+  "description": "An AI content-review team with persistent memory powered by Cognee Cloud.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
