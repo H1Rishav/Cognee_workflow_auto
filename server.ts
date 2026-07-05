@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -11,6 +12,42 @@ const PORT = 3000;
 app.use(express.json());
 
 // API routes go here FIRST
+
+// Secure server-side Gemini Proxy Endpoint
+app.post("/api/gemini/generate", async (req, res) => {
+  const { systemInstruction, prompt, apiKey } = req.body;
+  const keyToUse = apiKey || process.env.GEMINI_API_KEY;
+
+  if (!keyToUse) {
+    console.error("[Gemini Error] No GEMINI_API_KEY configured.");
+    return res.status(400).json({ error: "Gemini API key is missing. Please set it in Settings > Secrets or the GEMINI_API_KEY constant." });
+  }
+
+  try {
+    const ai = new GoogleGenAI({
+      apiKey: keyToUse,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction,
+        temperature: 0.7,
+      },
+    });
+
+    res.json({ text: response.text });
+  } catch (err: any) {
+    console.error("[Gemini API Call Failed]:", err);
+    res.status(500).json({ error: err.message || "Gemini generation failed" });
+  }
+});
 
 // Health check endpoint
 app.get("/api/cognee/health", async (req, res) => {

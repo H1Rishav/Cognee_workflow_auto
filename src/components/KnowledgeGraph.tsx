@@ -5,12 +5,14 @@
 
 import { useState, useEffect, useRef } from "react";
 import { MemoryNode, MemoryLink } from "../types";
+import { Maximize2, Minimize2 } from "lucide-react";
 
 interface KnowledgeGraphProps {
   nodes: MemoryNode[];
   onSelectNode?: (node: MemoryNode) => void;
   selectedNodeId?: string | null;
   recallHighlightIds?: string[];
+  forgottenNodeIds?: string[];
 }
 
 interface VisualNode {
@@ -30,9 +32,11 @@ export default function KnowledgeGraph({
   onSelectNode,
   selectedNodeId,
   recallHighlightIds = [],
+  forgottenNodeIds = [],
 }: KnowledgeGraphProps) {
   const [visualNodes, setVisualNodes] = useState<VisualNode[]>([]);
   const [visualLinks, setVisualLinks] = useState<MemoryLink[]>([]);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const visualNodesRef = useRef<VisualNode[]>([]);
   const visualLinksRef = useRef<MemoryLink[]>([]);
   const prevNodeIdsRef = useRef<string[]>([]);
@@ -163,12 +167,30 @@ export default function KnowledgeGraph({
     const height = 400;
     const padding = 60;
 
+    // Build the combined list of nodes including those that are in forgottenNodeIds
+    // but have been deleted from 'nodes' (so they can dissolve in red)
+    const combinedNodes = [...nodes];
+    forgottenNodeIds.forEach((fid) => {
+      if (!combinedNodes.some((n) => n.id === fid)) {
+        const existingVis = visualNodesRef.current.find((vn) => vn.id === fid);
+        combinedNodes.push({
+          id: fid,
+          type: existingVis?.type || "forgotten",
+          content: "DIS_PRUNING...",
+          tags: ["forgotten"],
+          weight: 0,
+          timestamp: new Date().toISOString(),
+          links: []
+        });
+      }
+    });
+
     // Detect if a genuinely new node was added to restart physics simulation
-    const currentNodeIds = nodes.map((n) => n.id);
+    const currentNodeIds = combinedNodes.map((n) => n.id);
     const hasNewNode = currentNodeIds.some((id) => !prevNodeIdsRef.current.includes(id));
     prevNodeIdsRef.current = currentNodeIds;
 
-    const mapped = nodes.map((n, index) => {
+    const mapped = combinedNodes.map((n, index) => {
       const existing = visualNodesRef.current.find((vn) => vn.id === n.id);
       if (existing) {
         return {
@@ -177,7 +199,7 @@ export default function KnowledgeGraph({
         };
       }
 
-      const angle = (index / (nodes.length || 1)) * Math.PI * 2;
+      const angle = (index / (combinedNodes.length || 1)) * Math.PI * 2;
       const radius = 100 + Math.random() * 80;
       
       const x = width / 2 + Math.cos(angle) * radius + (Math.random() - 0.5) * 40;
@@ -186,6 +208,8 @@ export default function KnowledgeGraph({
       let size = 6;
       if (n.type === "compliance_rule") size = 10;
       else if (n.type === "review") size = 8;
+      else if (n.type === "outcome") size = 7;
+      else if (n.type === "forgotten") size = 8;
 
       return {
         id: n.id,
@@ -205,10 +229,10 @@ export default function KnowledgeGraph({
 
     // Extract links
     const links: MemoryLink[] = [];
-    nodes.forEach((node) => {
+    combinedNodes.forEach((node) => {
       if (node.links) {
         node.links.forEach((targetId) => {
-          if (nodes.some((n) => n.id === targetId)) {
+          if (combinedNodes.some((n) => n.id === targetId)) {
             links.push({
               source: node.id,
               target: targetId,
@@ -223,7 +247,7 @@ export default function KnowledgeGraph({
     if (hasNewNode || (mapped.length > 0 && alphaRef.current === 0)) {
       reheatSimulation();
     }
-  }, [nodes]);
+  }, [nodes, forgottenNodeIds]);
 
   // Handle unmount cleanup
   useEffect(() => {
@@ -241,7 +265,11 @@ export default function KnowledgeGraph({
   };
 
   return (
-    <div className="relative w-full border border-white/10 bg-black overflow-hidden h-[420px] flex flex-col justify-end">
+    <div className={`relative w-full border border-white/10 bg-black overflow-hidden flex flex-col justify-end transition-all duration-500 ${
+      isFullscreen
+        ? "fixed inset-0 w-screen h-screen z-50 p-6"
+        : "h-[420px]"
+    }`}>
       {/* Background Grid Pattern */}
       <div className="absolute inset-0 pointer-events-none opacity-20 bg-[linear-gradient(to_right,#ffffff11_1px,transparent_1px),linear-gradient(to_bottom,#ffffff11_1px,transparent_1px)] bg-[size:24px_24px]" />
 
@@ -255,9 +283,28 @@ export default function KnowledgeGraph({
       <div className="absolute top-3 left-4 font-mono text-[9px] text-white/30 tracking-widest uppercase">
         HYBRID COGNITIVE GRAPH-VECTOR STORE
       </div>
-      <div className="absolute top-3 right-4 font-mono text-[9px] text-white/30 tracking-widest uppercase">
+      <div className="absolute top-3 right-36 font-mono text-[9px] text-white/30 tracking-widest uppercase hidden sm:block">
         LIVE_NODES: {nodes.length} · SCALE: 2^128
       </div>
+
+      {/* Fullscreen Toggle Button */}
+      <button
+        id="btn-graph-fullscreen"
+        onClick={() => setIsFullscreen(!isFullscreen)}
+        className="absolute top-2.5 right-4 font-mono text-[9px] border border-white/10 hover:border-white hover:bg-white hover:text-black bg-black text-white px-2 py-1 flex items-center gap-1.5 transition-all duration-300 cursor-pointer z-10 uppercase tracking-widest"
+      >
+        {isFullscreen ? (
+          <>
+            <Minimize2 className="w-3 h-3" />
+            <span>EXIT_FULLSCREEN</span>
+          </>
+        ) : (
+          <>
+            <Maximize2 className="w-3 h-3" />
+            <span>FULLSCREEN_VIEW</span>
+          </>
+        )}
+      </button>
 
       {/* SVG graph viewport */}
       <svg className="w-full h-full cursor-crosshair" viewBox="0 0 800 400">
@@ -277,6 +324,7 @@ export default function KnowledgeGraph({
           const to = findNodeCoords(link.target);
           if (from.x === 0 || to.x === 0) return null;
 
+          const isForgotten = forgottenNodeIds.includes(link.source) || forgottenNodeIds.includes(link.target);
           const isHighlighted =
             recallHighlightIds.includes(link.source) ||
             recallHighlightIds.includes(link.target);
@@ -291,14 +339,16 @@ export default function KnowledgeGraph({
               x2={to.x}
               y2={to.y}
               stroke={
-                isHighlighted
+                isForgotten
                   ? "#FF3B30"
+                  : isHighlighted
+                  ? "#FFFFFF"
                   : isSelected
                   ? "#FFFFFF"
                   : "rgba(255, 255, 255, 0.15)"
               }
-              strokeWidth={isHighlighted ? "1.5" : isSelected ? "1" : "0.5"}
-              strokeDasharray={isHighlighted ? "3,3" : "none"}
+              strokeWidth={isForgotten ? "1.5" : isHighlighted ? "1.5" : isSelected ? "1" : "0.5"}
+              strokeDasharray={isForgotten ? "2,2" : isHighlighted ? "3,3" : "none"}
               className="transition-colors duration-300"
             />
           );
@@ -308,24 +358,36 @@ export default function KnowledgeGraph({
         {visualNodes.map((vNode) => {
           const isSelected = selectedNodeId === vNode.id;
           const isHighlighted = recallHighlightIds.includes(vNode.id);
+          const isForgotten = forgottenNodeIds.includes(vNode.id);
           const rawNode = nodes.find((n) => n.id === vNode.id);
           
-          let color = "rgba(255, 255, 255, 0.3)";
-          if (vNode.type === "compliance_rule") {
-            color = isHighlighted ? "#FF3B30" : "rgba(255, 255, 255, 0.85)";
+          let color = "rgba(255, 255, 255, 0.4)";
+          let strokeColor = "transparent";
+          let strokeWidth = "0";
+
+          if (isForgotten) {
+            color = "#FF3B30";
+          } else if (vNode.type === "compliance_rule") {
+            color = "#FFFFFF";
           } else if (vNode.type === "review") {
-            const isRejected = rawNode?.content.toLowerCase().includes("rejected");
-            color = isRejected ? "#FF3B30" : "rgba(255, 255, 255, 0.5)";
+            color = "rgba(255, 255, 255, 0.6)";
+          } else if (vNode.type === "outcome") {
+            color = "#000000";
+            strokeColor = "#FFFFFF";
+            strokeWidth = "2";
           }
 
-          if (isSelected) color = "#FFFFFF";
+          if (isSelected) {
+            color = isForgotten ? "#FF3B30" : "#FFFFFF";
+          }
 
           return (
             <g
               key={vNode.id}
-              className="group cursor-pointer"
+              className={`group cursor-pointer ${isForgotten ? "animate-pulse" : ""}`}
               transform={`translate(${vNode.x}, ${vNode.y})`}
               onClick={() => {
+                if (isForgotten) return;
                 if (onSelectNode && rawNode) onSelectNode(rawNode);
               }}
             >
@@ -338,40 +400,40 @@ export default function KnowledgeGraph({
                 className="pointer-events-auto"
               />
 
-              {/* Pulsing selection aura (Native SVG animations prevent CSS scaling origin flicker) */}
-              {(isSelected || isHighlighted) && (
+              {/* Pulsing selection aura */}
+              {(isSelected || isHighlighted || isForgotten) && (
                 <circle
                   cx={0}
                   cy={0}
                   r={vNode.size + 2}
                   fill="none"
-                  stroke={isHighlighted ? "#FF3B30" : "#FFFFFF"}
+                  stroke={isForgotten ? "#FF3B30" : "#FFFFFF"}
                   strokeWidth="0.75"
                   opacity="0.8"
                 >
                   <animate
                     attributeName="r"
                     values={`${vNode.size + 2};${vNode.size + 16}`}
-                    dur="2.5s"
+                    dur={isForgotten ? "1.5s" : "2.5s"}
                     repeatCount="indefinite"
                   />
                   <animate
                     attributeName="opacity"
                     values="0.8;0"
-                    dur="2.5s"
+                    dur={isForgotten ? "1.5s" : "2.5s"}
                     repeatCount="indefinite"
                   />
                 </circle>
               )}
 
-              {/* Outer static glow/halo (vector background avoids expensive browser-rendering SVG filters) */}
-              {(isSelected || isHighlighted) && (
+              {/* Outer static glow/halo */}
+              {(isSelected || isHighlighted || isForgotten) && (
                 <circle
                   cx={0}
                   cy={0}
                   r={vNode.size + 4}
-                  fill={isHighlighted ? "rgba(255, 59, 48, 0.15)" : "rgba(255, 255, 255, 0.1)"}
-                  stroke={isHighlighted ? "rgba(255, 59, 48, 0.3)" : "rgba(255, 255, 255, 0.2)"}
+                  fill={isForgotten ? "rgba(255, 59, 48, 0.15)" : "rgba(255, 255, 255, 0.1)"}
+                  stroke={isForgotten ? "rgba(255, 59, 48, 0.3)" : "rgba(255, 255, 255, 0.2)"}
                   strokeWidth="1"
                 />
               )}
@@ -382,25 +444,38 @@ export default function KnowledgeGraph({
                 cy={0}
                 r={isSelected ? vNode.size + 3 : vNode.size}
                 fill={color}
-                stroke={isSelected ? "#FFFFFF" : isHighlighted ? "#FF3B30" : "transparent"}
-                strokeWidth="1.5"
-                className="transition-transform duration-300 group-hover:scale-125 group-hover:fill-white"
+                stroke={isForgotten ? "#FF3B30" : strokeColor !== "transparent" ? strokeColor : (isSelected ? "#FFFFFF" : "transparent")}
+                strokeWidth={isForgotten ? "1.5" : strokeWidth !== "0" ? strokeWidth : (isSelected ? "1.5" : "0")}
+                className="transition-transform duration-300 group-hover:scale-125"
                 style={{ transformOrigin: "0px 0px" }}
               />
+
+              {/* Dotted border loop for outcome nodes */}
+              {vNode.type === "outcome" && !isForgotten && (
+                <circle
+                  cx={0}
+                  cy={0}
+                  r={vNode.size + 3}
+                  fill="none"
+                  stroke="#FFFFFF"
+                  strokeWidth="0.75"
+                  strokeDasharray="2,2"
+                />
+              )}
 
               {/* Text Label on hover or if selected/highlighted */}
               <text
                 x={12}
                 y={4}
-                fill={isHighlighted ? "#FF3B30" : isSelected ? "#FFFFFF" : "rgba(255, 255, 255, 0.4)"}
+                fill={isForgotten ? "#FF3B30" : (isSelected ? "#FFFFFF" : "rgba(255, 255, 255, 0.4)")}
                 fontSize="9px"
                 fontFamily="monospace"
                 letterSpacing="1px"
                 className={`pointer-events-none transition-all duration-300 font-medium ${
-                  isSelected || isHighlighted ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                  isSelected || isHighlighted || isForgotten ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                 }`}
               >
-                {vNode.label.toUpperCase()}
+                {isForgotten ? `[DISSOLVING_${vNode.label.toUpperCase()}]` : vNode.label.toUpperCase()}
               </text>
             </g>
           );
@@ -408,16 +483,19 @@ export default function KnowledgeGraph({
       </svg>
 
       {/* Key Legend bottom border */}
-      <div className="w-full border-t border-white/10 bg-black/90 py-1.5 px-4 flex justify-between font-mono text-[9px] text-white/40 tracking-widest uppercase">
-        <div className="flex gap-4">
+      <div className="w-full border-t border-white/10 bg-black/90 py-1.5 px-4 flex flex-col sm:flex-row justify-between font-mono text-[9px] text-white/40 tracking-widest uppercase gap-2">
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 bg-white rounded-full inline-block" /> COMPLIANCE_RULES
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 bg-white/40 rounded-full inline-block" /> HISTORICAL_REVIEWS
+            <span className="w-1.5 h-1.5 bg-white/60 rounded-full inline-block" /> HISTORICAL_REVIEWS
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 bg-[#FF3B30] rounded-full inline-block" /> HEALTH_VIOLATIONS / ALERTS
+            <span className="w-1.5 h-1.5 border border-white rounded-full inline-block" /> OUTCOME_GROUNDINGS
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 bg-[#FF3B30] rounded-full inline-block" /> PRUNED_RECORDS
           </span>
         </div>
         <div>
